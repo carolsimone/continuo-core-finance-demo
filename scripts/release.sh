@@ -39,6 +39,11 @@
 #                      registry ref, since continuo runs that verbatim.
 #
 # Optional:
+#   RELEASE_API_URL  — POST directly to a LOCAL release-controller at this URL
+#                      (e.g. http://localhost:8088, reached via
+#                      `kubectl -n continuo port-forward svc/release-controller 8088:8088`)
+#                      instead of the SSH+Hetzner path. When set, HETZNER_HOST is
+#                      not required. This is the local content-demo path.
 #   KIND             — "python" to mark this release as a python-node service
 #                      (adds "kind":"python" to the POST body). Any other
 #                      value, or leaving it unset, keeps the existing dbt
@@ -57,7 +62,12 @@
 
 set -euo pipefail
 
-: "${HETZNER_HOST:?HETZNER_HOST must be set}"
+# Local content-demo path: set RELEASE_API_URL (e.g. http://localhost:8088, via
+#   kubectl -n continuo port-forward svc/release-controller 8088:8088
+# ) to POST straight to a local release-controller. Otherwise SSH to HETZNER_HOST.
+if [ -z "${RELEASE_API_URL:-}" ]; then
+  : "${HETZNER_HOST:?HETZNER_HOST must be set (or set RELEASE_API_URL for a local release, e.g. http://localhost:8088)}"
+fi
 : "${RELEASE_ID:?RELEASE_ID must be set}"
 : "${SERVICE:?SERVICE must be set}"
 : "${IMAGE_TAG:?IMAGE_TAG must be set}"
@@ -89,6 +99,15 @@ SSH_OPTS=(
 # contains no single quotes, so single-quoting it into the env is safe.
 remote_api() {
   local method="$1" path="$2" body="${3:-}"
+  # Local path: POST straight to a reachable release-controller URL (no SSH).
+  if [ -n "${RELEASE_API_URL:-}" ]; then
+    if [ -n "$body" ]; then
+      curl -sf -X "$method" "${RELEASE_API_URL}${path}" -H 'content-type: application/json' -d "$body"
+    else
+      curl -sf -X "$method" "${RELEASE_API_URL}${path}"
+    fi
+    return
+  fi
   ssh "${SSH_OPTS[@]}" "root@${HETZNER_HOST}" \
     "FWD_PORT='${FWD_PORT}' METHOD='${method}' API_PATH='${path}' BODY='${body}' bash -s" <<'REMOTE'
 set -euo pipefail
@@ -114,7 +133,7 @@ fi
 REMOTE
 }
 
-echo "Driving release ${RELEASE_ID} (service=${SERVICE}, kind=${KIND:-dbt}, image_tag=${IMAGE_TAG}) against ${HETZNER_HOST}"
+echo "Driving release ${RELEASE_ID} (service=${SERVICE}, kind=${KIND:-dbt}, image_tag=${IMAGE_TAG}) against ${RELEASE_API_URL:-$HETZNER_HOST}"
 
 # Bootstrap decision, two paths:
 #   - unseeded prod: GET /current-prod returns current_prod_release_id="" when
