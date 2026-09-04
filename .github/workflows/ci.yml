@@ -1,0 +1,87 @@
+name: ci
+
+# continuo models a release as a SINGLE changed service (see release.yml), so a
+# PR touching more than one services/<svc>/ can never be released as-is. Catch
+# that at PR time instead of letting it land on main and fail release.yml.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'services/**'
+
+jobs:
+  check-single-service:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      service: ${{ steps.check.outputs.service }}
+      kind: ${{ steps.check.outputs.kind }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Need history to diff the PR's base against its head.
+          fetch-depth: 0
+
+      - name: Ensure at most one service changed
+        id: check
+        run: |
+          BASE="${{ github.event.pull_request.base.sha }}"
+          HEAD="${{ github.event.pull_request.head.sha }}"
+
+          CHANGED="$(git diff --name-only "$BASE" "$HEAD" -- 'services/' | cut -d/ -f1-2 | sort -u)"
+          COUNT="$(printf '%s\n' "$CHANGED" | grep -c . || true)"
+
+          if [ "$COUNT" -gt 1 ]; then
+            echo "::error::continuo accepts exactly one changed service per release; this PR touches ${COUNT}:"
+            printf '%s\n' "$CHANGED"
+            exit 1
+          fi
+
+          echo "OK: ${COUNT} service(s) changed"
+
+          if [ "$COUNT" -eq 1 ]; then
+            SERVICE="$(printf '%s' "$CHANGED" | cut -d/ -f2)"
+            # A service is python iff it declares contracts/ (a python-node
+            # service directory); every other service is a dbt project. This
+            # mirrors release.yml's own detect job so a PR is checked the same
+            # way its eventual release would be.
+            if [ -d "services/${SERVICE}/contracts" ]; then KIND="python"; else KIND="dbt"; fi
+            echo "service=${SERVICE}" >> "$GITHUB_OUTPUT"
+            echo "kind=${KIND}" >> "$GITHUB_OUTPUT"
+          fi
+
+  # Python services skip dbt entirely, so nothing above exercises their
+  # contracts or scripts. Run the same gate release.yml runs before it ever
+  # builds an image, so a broken contract/script fails the PR instead of the
+  # push-to-main release.
+  python-checks:
+    needs: check-single-service
+    if: needs.check-single-service.outputs.kind == 'python'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
+      # Pinned deliberately, not left to float — same pin as release.yml's
+      # install step, for the same reason: this gate must judge a PR the same
+      # way the eventual release would. Move this pin only alongside a
+      # deliberate runtime upgrade.
+      - name: Install continuo-python-runtime
+        run: |
+          uv tool install continuo-python-runtime==0.4.0 || \
+            uv tool install "git+https://github.com/carolsimone/continuo-python-runtime@v0.4.0"
+
+      - name: Lint python scripts (no hand-written SQL)
+        run: continuo-runtime lint "services/${{ needs.check-single-service.outputs.service }}/scripts"
+
+      - name: Validate python contracts
+        run: continuo-runtime validate "services/${{ needs.check-single-service.outputs.service }}/contracts" --dialect postgres

@@ -1,0 +1,15 @@
+default:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: "{{ env_var('POSTGRES_HOST', 'localhost') }}"
+      port: "{{ env_var('POSTGRES_PORT', '5432') | int }}"
+      dbname: "{{ env_var('POSTGRES_DB', 'continuo_dbt') }}"
+      user: "{{ env_var('POSTGRES_USER', 'continuo_svc') }}"
+      password: "{{ env_var('POSTGRES_PASSWORD', 'runner') }}"
+      schema: analytics
+      threads: 4
+
+
+# Re-released for the warehouse-Secret env cutover (continuo #314).
