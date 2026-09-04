@@ -9,34 +9,39 @@ Two teams, one repo. Each service is a dbt project with a Dockerfile; a release 
 - `services/continuo-core` — builds `daily_transactions`, `revenue_per_user`.
 - `services/continuo-finance` — builds `fx_transactions_eur`, `operational_cost_per_user`, `ltv_per_user`, …
 
-The two depend on each other across projects (`continuo-core` reads `analytics.fx_transactions_eur`; `continuo-finance` reads `analytics.revenue_per_user`). On Airflow that mesh had no run order two separate cron schedules could express. **Continuo sequences it itself** at release time, from the validation closure — the whole reason for the move. There are **no fixtures** here; the `fx_transactions_eur` fixture in the "before" existed only because Airflow couldn't order the mesh.
+The two depend on each other across projects (`continuo-core` reads `analytics.fx_transactions_eur`; `continuo-finance` reads `analytics.revenue_per_user`). On Airflow that mesh had no run order two separate cron schedules could express. **Continuo sequences it itself** at release time, from the validation closure — the whole reason for the move. Unlike the Airflow "before", `fx_transactions_eur` is **not** frozen here — Continuo orders the mesh. The one frozen input is `marketing_cost_per_user`, a marketing-team table `ltv_per_user` reads: it is carried as a finance seed so this two-team demo runs without a marketing service.
 
 ## Run it locally
 
-This is a content demo — everything runs on your machine (Continuo + k3s + your Postgres/Redis/Neo4j + MinIO for S3). No Hetzner. Full walkthrough: the `continuo` repo's `docs/try-it-locally.md`.
+This is a content demo — everything runs on your machine (Continuo on a local kind/k3s cluster, with its bundled Postgres/Redis/Neo4j/MinIO). No Hetzner. **Set up Continuo first** with the `continuo` repo's `docs/try-it-locally.md` — give the container runtime **≥ 12 GiB** (a starved runtime fails with a confusing API timeout).
 
-1. Stand up Continuo on your local cluster, then port-forward the release API:
+1. Point at the local release API:
    ```bash
    kubectl -n continuo port-forward svc/release-controller 8088:8088 &
    ```
-2. Build each service image and load it into the cluster (k3s: `k3s ctr images import <(docker save …)`; kind: `kind load docker-image`):
+2. Bootstrap both services — `make release` builds the image, loads it into the cluster, and POSTs the release. Add `LOADER=k3s` if your cluster is k3s (default is kind):
    ```bash
-   docker build -t continuo-core:v1 services/continuo-core
-   docker build -t continuo-finance:v1 services/continuo-finance
+   make release SERVICE=continuo-core    TAG=v1
+   make release SERVICE=continuo-finance TAG=v1
    ```
-3. Release through Continuo with `release.sh` in **local mode** (`RELEASE_API_URL` — no SSH):
+   Each ends `promoted`: Continuo validates the whole cross-service graph in a shadow, then promotes.
+3. **Trigger a run so the tables physically exist.** Validation clones unchanged upstream tables from production, so they must be real before the break in step 4. Run the `daily` schedule from the UI:
    ```bash
-   RELEASE_API_URL=http://localhost:8088 RELEASE_ID=rel-core-1 \
-     SERVICE=continuo-core IMAGE_TAG=v1 \
-     REPO=carolsimone/continuo-core-finance-demo COMMIT_SHA=$(git rev-parse HEAD) \
-     bash scripts/release.sh          # first release bootstraps (promotes without validation)
-
-   RELEASE_API_URL=http://localhost:8088 RELEASE_ID=rel-finance-1 \
-     SERVICE=continuo-finance IMAGE_TAG=v1 \
-     REPO=carolsimone/continuo-core-finance-demo COMMIT_SHA=$(git rev-parse HEAD) \
-     bash scripts/release.sh
+   kubectl -n continuo port-forward svc/ui 8090:8090 &
+   # Log in (dex demo login: admin@example.com / password — see try-it-locally.md for the one-time
+   # /etc/hosts line the OIDC redirect needs), pick the `daily` schedule, press ▶ Trigger run.
+   kubectl -n continuo get jobs -w   # wait for the run's Jobs to finish
    ```
-   Trigger a run so the tables physically exist, then do the break below and release `continuo-core` again with a fresh `RELEASE_ID` and image tag.
+4. **Break it, and watch Continuo refuse the release.** Rename the column `continuo-finance` depends on, then release `continuo-core` again:
+   ```bash
+   ( cd services/continuo-core
+     sed -i.bak -E 's/(COALESCE\(a\.revenue_eur, 0\)[[:space:]]+AS )revenue_eur,/\1net_revenue_eur,/' models/revenue_per_user.sql
+     sed -i.bak -E 's/^([[:space:]]*-[[:space:]]*name:[[:space:]]*)revenue_eur[[:space:]]*$/\1net_revenue_eur/' models/schema.yml
+     sed -i.bak -E 's/([^_])revenue_eur/\1net_revenue_eur/g' tests/assert_revenue_non_negative.sql
+     rm -f models/*.bak tests/*.bak )
+   make release SERVICE=continuo-core TAG=v2      # -> rejected
+   ```
+   Continuo validates `continuo-core` against the topology, sees `continuo-finance`'s `ltv_per_user` still reads `revenue_eur`, and refuses to promote. `curl -s http://localhost:8088/current-prod` still shows the last good release. Revert with `git checkout -- services/continuo-core`.
 
 ## The cross-team break, caught here
 
