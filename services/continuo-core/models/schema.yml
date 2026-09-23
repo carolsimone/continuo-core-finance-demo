@@ -31,8 +31,8 @@ models:
       - name: acquisition_month
         tests:
           - not_null
-      - name: revenue_eur
-        description: "Sum of fee_amount_eur across this user's transactions. Zero for users with none."
+      - name: net_revenue_eur
+        description: "Sum of fee_amount_eur across this user's transactions, net of fees. Zero for users with none."
         tests:
           - not_null
       - name: gross_volume_eur

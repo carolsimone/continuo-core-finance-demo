@@ -3,8 +3,8 @@
 
 SELECT
     user_id,
-    revenue_eur,
+    net_revenue_eur,
     gross_volume_eur
 FROM {{ ref('revenue_per_user') }}
-WHERE revenue_eur < 0
+WHERE net_revenue_eur < 0
    OR gross_volume_eur < 0
