@@ -57,11 +57,34 @@ The break that silently corrupted finance on Airflow — `continuo-core` renames
 
 Continuo keys production state by **service name, globally** (`service_prod`, a singleton `current_prod`). These are named `continuo-core` / `continuo-finance` (not `core`/`finance`) so they don't collide with continuo-demo's services if both ever run against the same Continuo instance.
 
-## CI path — disabled
+## Runs locally only
 
-`.github/workflows/release.yml` with `scripts/release.sh` releases via GitHub Actions to a remote continuo through its public `/api/v1` API, authenticating with a bearer token. In CI that token is the workflow's GitHub Actions OIDC token: the release job sets `permissions: id-token: write`, and the repository must be bound to the service in continuo's `ciAuth.bindings` (continuo's `deploy/README.md`, "Releasing from CI (GitHub Actions)", is the authoritative contract). It needs the repository variable `CONTINUO_URL` (the origin of continuo's ui) and the `DOCKERHUB_*` secrets; python services also use the `HETZNER_S3_*` secrets for the contract upload. For a CI token, `repo` and `commit_sha` must equal the token's values or be omitted; `release.sh` sends the workflow's own. Bootstrapping a service is an operator action: a CI binding may bootstrap only with `allowBootstrap: true`, so the first release of each service is made locally with an operator token (`make release` above). Actions are **disabled** on this repo — the local path above is the one this demo uses. The workflow is kept as a reference for how CD integrates with continuo.
+This repo releases only to a continuo running on your machine; it has no CI release workflow. Two things make that work: a port-forward to the cluster, and a bearer token you mint yourself.
 
-`scripts/release.sh` is covered by `scripts/tests/test_release_sh.py`, which runs it against a stub of the release API (`uvx pytest scripts/tests/test_release_sh.py`; needs curl and jq), and by `shellcheck scripts/release.sh`.
+**Port-forward the ui and Dex.** continuo's release API is served by the `ui` at `/api/v1` — the same service as the dashboard, so no other continuo service needs forwarding. Dex is the bundled login provider that issues your token:
+
+```bash
+kubectl -n continuo port-forward svc/ui 8090:8090 &
+kubectl -n continuo port-forward svc/continuo-dex 5556:5556 &
+```
+
+**Mint a bearer token.** Every call to `/api/v1` carries `Authorization: Bearer <token>`. Locally the token is an ID token Dex issues for the demo operator account (`admin@example.com` / `password`), traded for the password in one request:
+
+```bash
+CLIENT_SECRET=$(kubectl -n continuo get secret continuo-dex -o jsonpath='{.data.client-secret}' | base64 -d)
+export CONTINUO_TOKEN=$(curl -s -u "continuo-ui:${CLIENT_SECRET}" http://localhost:5556/dex/token \
+  -d grant_type=password -d scope="openid email profile" \
+  -d username=admin@example.com -d password=password | jq -r .id_token)
+
+# Check it: prints the current production release, or an "invalid_token" error.
+curl -s -H "Authorization: Bearer $CONTINUO_TOKEN" http://localhost:8090/api/v1/current-prod
+```
+
+If `echo $CONTINUO_TOKEN` prints `null`, the login failed: check the Dex port-forward. The token lasts one hour; run the `export CONTINUO_TOKEN=...` line again when a call answers `401`. `make release` reads `CONTINUO_TOKEN` and targets `CONTINUO_URL` (default `http://localhost:8090`).
+
+[continuo-demo](https://github.com/carolsimone/continuo-demo) shows the CD path, where a pipeline releases with its GitHub Actions token instead.
+
+`scripts/release.sh` is covered by `scripts/tests/test_release_sh.py`, which runs it against a stub of the release API (`uvx pytest==9.1.1 scripts/tests/test_release_sh.py`; needs curl and jq), and by `shellcheck scripts/release.sh`.
 
 ## License
 
