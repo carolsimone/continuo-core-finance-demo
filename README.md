@@ -13,7 +13,7 @@ The two depend on each other across projects (`continuo-core` reads `analytics.f
 
 ## Run it locally
 
-This is a content demo — everything runs on your machine (Continuo on a local kind/k3s cluster, with its bundled Postgres/Redis/Neo4j/MinIO). No Hetzner. **Set up Continuo first** with the `continuo` repo's `docs/try-it-locally.md` — give the container runtime **≥ 12 GiB** (a starved runtime fails with a confusing API timeout).
+This is a content demo — everything runs on your machine (Continuo on a local kind/k3s cluster, with its bundled Postgres/Redis/Neo4j/MinIO). No Hetzner. **Set up Continuo first** with the `continuo` repo's `docs/try-it-locally.md` — give the container runtime **6 CPUs and 16 GiB of memory** (a starved runtime fails with a confusing API timeout).
 
 1. Point at the local ui, which serves continuo's public release API (`/api/v1`), and get an operator's bearer token. With the bundled Dex (continuo's `deploy/AUTH.md`, "Bearer tokens"):
    ```bash
@@ -30,7 +30,7 @@ This is a content demo — everything runs on your machine (Continuo on a local 
    make release SERVICE=continuo-core    TAG=v1
    make release SERVICE=continuo-finance TAG=v1
    ```
-   Each ends `promoted`: Continuo validates the whole cross-service graph in a shadow, then promotes.
+   Each ends `promoted`. The first, `continuo-core`, finds production empty and bootstraps (promotes without validation); `continuo-finance` is then validated against the whole cross-service graph in a shadow before it promotes.
 3. **Trigger a run so the tables physically exist.** Validation clones unchanged upstream tables from production, so they must be real before the break in step 4. Run the `daily` schedule from the UI:
    ```bash
    # (reuses the ui port-forward from step 1)
