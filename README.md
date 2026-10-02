@@ -59,7 +59,30 @@ Continuo keys production state by **service name, globally** (`service_prod`, a 
 
 ## Runs locally only
 
-This repo releases only to a continuo on your machine, through `make release` above: `CONTINUO_URL` defaults to `http://localhost:8090` (the ui port-forward), and the bearer token is your own `CONTINUO_TOKEN`. It has no CI release workflow. [continuo-demo](https://github.com/carolsimone/continuo-demo) shows how a CD pipeline releases through continuo's public API with its GitHub Actions token.
+This repo releases only to a continuo running on your machine; it has no CI release workflow. Two things make that work: a port-forward to the cluster, and a bearer token you mint yourself.
+
+**Port-forward the ui and Dex.** continuo's release API is served by the `ui` at `/api/v1` — the same service as the dashboard, so no other continuo service needs forwarding. Dex is the bundled login provider that issues your token:
+
+```bash
+kubectl -n continuo port-forward svc/ui 8090:8090 &
+kubectl -n continuo port-forward svc/continuo-dex 5556:5556 &
+```
+
+**Mint a bearer token.** Every call to `/api/v1` carries `Authorization: Bearer <token>`. Locally the token is an ID token Dex issues for the demo operator account (`admin@example.com` / `password`), traded for the password in one request:
+
+```bash
+CLIENT_SECRET=$(kubectl -n continuo get secret continuo-dex -o jsonpath='{.data.client-secret}' | base64 -d)
+export CONTINUO_TOKEN=$(curl -s -u "continuo-ui:${CLIENT_SECRET}" http://localhost:5556/dex/token \
+  -d grant_type=password -d scope="openid email profile" \
+  -d username=admin@example.com -d password=password | jq -r .id_token)
+
+# Check it: prints the current production release, or an "invalid_token" error.
+curl -s -H "Authorization: Bearer $CONTINUO_TOKEN" http://localhost:8090/api/v1/current-prod
+```
+
+If `echo $CONTINUO_TOKEN` prints `null`, the login failed: check the Dex port-forward. The token lasts one hour; run the `export CONTINUO_TOKEN=...` line again when a call answers `401`. `make release` reads `CONTINUO_TOKEN` and targets `CONTINUO_URL` (default `http://localhost:8090`).
+
+[continuo-demo](https://github.com/carolsimone/continuo-demo) shows the CD path, where a pipeline releases with its GitHub Actions token instead.
 
 `scripts/release.sh` is covered by `scripts/tests/test_release_sh.py`, which runs it against a stub of the release API (`uvx pytest==9.1.1 scripts/tests/test_release_sh.py`; needs curl and jq), and by `shellcheck scripts/release.sh`.
 
