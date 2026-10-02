@@ -61,7 +61,7 @@ Continuo keys production state by **service name, globally** (`service_prod`, a 
 
 `.github/workflows/release.yml` with `scripts/release.sh` releases via GitHub Actions to a remote continuo through its public `/api/v1` API, authenticating with a bearer token. In CI that token is the workflow's GitHub Actions OIDC token: the release job sets `permissions: id-token: write`, and the repository must be bound to the service in continuo's `ciAuth.bindings` (continuo's `deploy/README.md`, "Releasing from CI (GitHub Actions)", is the authoritative contract). It needs the repository variable `CONTINUO_URL` (the origin of continuo's ui) and the `DOCKERHUB_*` secrets; python services also use the `HETZNER_S3_*` secrets for the contract upload. For a CI token, `repo` and `commit_sha` must equal the token's values or be omitted; `release.sh` sends the workflow's own. Bootstrapping a service is an operator action: a CI binding may bootstrap only with `allowBootstrap: true`, so the first release of each service is made locally with an operator token (`make release` above). Actions are **disabled** on this repo — the local path above is the one this demo uses. The workflow is kept as a reference for how CD integrates with continuo.
 
-`scripts/release.sh` is covered by `scripts/tests/test_release_sh.py`, which runs it against a stub of the release API (`uvx pytest scripts/tests/test_release_sh.py`; needs curl and jq), and by `shellcheck scripts/release.sh`.
+`scripts/release.sh` is covered by `scripts/tests/test_release_sh.py`, which runs it against a stub of the release API (`uvx pytest==9.1.1 scripts/tests/test_release_sh.py`; needs curl and jq), and by `shellcheck scripts/release.sh`.
 
 ## License
 
