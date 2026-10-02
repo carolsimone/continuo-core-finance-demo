@@ -1,21 +1,27 @@
 # Local release helpers for continuo-core-finance-demo.
 #
 # Prereqs (see README): Continuo running on a local cluster, and
-#   kubectl -n continuo port-forward svc/release-controller 8088:8088
-# so the controller is reachable at $(RELEASE_API_URL).
+#   kubectl -n continuo port-forward svc/ui 8090:8090
+# so continuo's public API is reachable at $(CONTINUO_URL), plus an operator's
+# bearer token in the CONTINUO_TOKEN environment variable (continuo's
+# deploy/AUTH.md, "Bearer tokens", shows how to get one from Dex).
 #
 # Usage:
 #   make release SERVICE=continuo-core    TAG=v1    # build + load + POST to local Continuo
 #   make release SERVICE=continuo-finance TAG=v1
 #   make release SERVICE=continuo-core    TAG=v2 LOADER=k3s   # if your cluster is k3s, not kind
 
-RELEASE_API_URL ?= http://localhost:8088
+CONTINUO_URL    ?= http://localhost:8090
 REPO            ?= carolsimone/continuo-core-finance-demo
 CLUSTER         ?= continuo        # kind cluster name (used when LOADER=kind)
 LOADER          ?= kind            # kind | k3s
 TAG             ?= v1
 
-.PHONY: build load release
+.PHONY: build load release require-token
+# Checked first, so a missing token fails before the image is built.
+require-token:
+	@test -n "$$CONTINUO_TOKEN" || { echo "set CONTINUO_TOKEN to an operator's bearer token (see README)"; exit 1; }
+
 build:
 	@test -n "$(SERVICE)" || { echo "set SERVICE=continuo-core|continuo-finance"; exit 1; }
 	docker build -t $(SERVICE):$(TAG) services/$(SERVICE)
@@ -28,10 +34,10 @@ else
 	kind load docker-image $(SERVICE):$(TAG) --name $(CLUSTER)
 endif
 
-# build + load the image, then POST a release to the local release-controller.
+# build + load the image, then POST a release to the local continuo.
 # RELEASE_ID is unique per invocation so re-releases don't collide.
-release: build load
-	RELEASE_API_URL=$(RELEASE_API_URL) \
+release: require-token build load
+	CONTINUO_URL=$(CONTINUO_URL) \
 	RELEASE_ID=rel-$(SERVICE)-$(TAG)-$$(date +%s) \
 	SERVICE=$(SERVICE) IMAGE_TAG=$(TAG) \
 	REPO=$(REPO) COMMIT_SHA=$$(git rev-parse HEAD) \
