@@ -17,7 +17,11 @@ CLUSTER         ?= continuo        # kind cluster name (used when LOADER=kind)
 LOADER          ?= kind            # kind | k3s
 TAG             ?= v1
 
-.PHONY: build load release
+.PHONY: build load release require-token
+# Checked first, so a missing token fails before the image is built.
+require-token:
+	@test -n "$$CONTINUO_TOKEN" || { echo "set CONTINUO_TOKEN to an operator's bearer token (see README)"; exit 1; }
+
 build:
 	@test -n "$(SERVICE)" || { echo "set SERVICE=continuo-core|continuo-finance"; exit 1; }
 	docker build -t $(SERVICE):$(TAG) services/$(SERVICE)
@@ -32,8 +36,7 @@ endif
 
 # build + load the image, then POST a release to the local continuo.
 # RELEASE_ID is unique per invocation so re-releases don't collide.
-release: build load
-	@test -n "$$CONTINUO_TOKEN" || { echo "set CONTINUO_TOKEN to an operator's bearer token (see README)"; exit 1; }
+release: require-token build load
 	CONTINUO_URL=$(CONTINUO_URL) \
 	RELEASE_ID=rel-$(SERVICE)-$(TAG)-$$(date +%s) \
 	SERVICE=$(SERVICE) IMAGE_TAG=$(TAG) \

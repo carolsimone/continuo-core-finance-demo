@@ -33,7 +33,7 @@ This is a content demo — everything runs on your machine (Continuo on a local 
    Each ends `promoted`: Continuo validates the whole cross-service graph in a shadow, then promotes.
 3. **Trigger a run so the tables physically exist.** Validation clones unchanged upstream tables from production, so they must be real before the break in step 4. Run the `daily` schedule from the UI:
    ```bash
-   kubectl -n continuo port-forward svc/ui 8090:8090 &
+   # (reuses the ui port-forward from step 1)
    # Log in (dex demo login: admin@example.com / password — see try-it-locally.md for the one-time
    # /etc/hosts line the OIDC redirect needs), pick the `daily` schedule, press ▶ Trigger run.
    kubectl -n continuo get jobs -w   # wait for the run's Jobs to finish
@@ -47,11 +47,11 @@ This is a content demo — everything runs on your machine (Continuo on a local 
      rm -f models/*.bak tests/*.bak )
    make release SERVICE=continuo-core TAG=v2      # -> rejected
    ```
-   Continuo validates `continuo-core` against the topology, sees `continuo-finance`'s `ltv_per_user` still reads `revenue_eur`, and refuses to promote. `curl -s -H "Authorization: Bearer $CONTINUO_TOKEN" http://localhost:8090/api/v1/current-prod` still shows the last good release. Revert with `git checkout -- services/continuo-core`.
+   continuo validates `continuo-core` against the topology, sees `continuo-finance`'s `ltv_per_user` still reads `revenue_eur`, and refuses to promote. `curl -s -H "Authorization: Bearer $CONTINUO_TOKEN" http://localhost:8090/api/v1/current-prod` still shows the last good release. Revert with `git checkout -- services/continuo-core`.
 
 ## The cross-team break, caught here
 
-The break that silently corrupted finance on Airflow — `continuo-core` renames `revenue_per_user.revenue_eur` → `net_revenue_eur` — is **rejected at release time** on Continuo, before it ships, because validation checks the whole topology (`continuo-finance`'s `ltv_per_user` still reads `revenue_eur`), not just the changed project. `GET /api/v1/current-prod` still shows the last good release — production is never touched. On Airflow, two separate schedulers had no way to see it.
+The break that silently corrupted finance on Airflow — `continuo-core` renames `revenue_per_user.revenue_eur` → `net_revenue_eur` — is **rejected at release time** on continuo, before it ships, because validation checks the whole topology (`continuo-finance`'s `ltv_per_user` still reads `revenue_eur`), not just the changed project. `GET /api/v1/current-prod` still shows the last good release — production is never touched. On Airflow, two separate schedulers had no way to see it.
 
 ## Why the services are named `continuo-*`
 
@@ -59,7 +59,7 @@ Continuo keys production state by **service name, globally** (`service_prod`, a 
 
 ## CI path — disabled
 
-`.github/workflows/release.yml` with `scripts/release.sh` releases via GitHub Actions to a remote continuo through its public `/api/v1` API, authenticating with a bearer token. In CI that token is the workflow's GitHub Actions OIDC token: the release job sets `permissions: id-token: write`, and the repository must be bound to the service in continuo's `ciAuth.bindings` (continuo's `deploy/README.md`, "Releasing from CI (GitHub Actions)", is the authoritative contract). It needs the repository variable `CONTINUO_URL` (the origin of continuo's ui) and the `DOCKERHUB_*` secrets; python services also use the `HETZNER_S3_*` secrets for the contract upload. For a CI token, `repo` and `commit_sha` must equal the token's values or be omitted; `release.sh` sends the workflow's own. Bootstrapping a service is an operator action: a CI binding may bootstrap only with `allowBootstrap: true`, so the first release of each service is made locally with an operator token (`make release` above). Actions are **disabled** on this repo — the local path above is the one this demo uses. The workflow is kept as a reference for how CD integrates with Continuo.
+`.github/workflows/release.yml` with `scripts/release.sh` releases via GitHub Actions to a remote continuo through its public `/api/v1` API, authenticating with a bearer token. In CI that token is the workflow's GitHub Actions OIDC token: the release job sets `permissions: id-token: write`, and the repository must be bound to the service in continuo's `ciAuth.bindings` (continuo's `deploy/README.md`, "Releasing from CI (GitHub Actions)", is the authoritative contract). It needs the repository variable `CONTINUO_URL` (the origin of continuo's ui) and the `DOCKERHUB_*` secrets; python services also use the `HETZNER_S3_*` secrets for the contract upload. For a CI token, `repo` and `commit_sha` must equal the token's values or be omitted; `release.sh` sends the workflow's own. Bootstrapping a service is an operator action: a CI binding may bootstrap only with `allowBootstrap: true`, so the first release of each service is made locally with an operator token (`make release` above). Actions are **disabled** on this repo — the local path above is the one this demo uses. The workflow is kept as a reference for how CD integrates with continuo.
 
 `scripts/release.sh` is covered by `scripts/tests/test_release_sh.py`, which runs it against a stub of the release API (`uvx pytest scripts/tests/test_release_sh.py`; needs curl and jq), and by `shellcheck scripts/release.sh`.
 
